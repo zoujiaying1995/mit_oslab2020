@@ -58,7 +58,7 @@ ls(char *path)
       if(de.inum == 0)
         continue;
       memmove(p, de.name, DIRSIZ);
-      p[DIRSIZ] = 0;
+      p[DIRSIZ] = 0; // 在将文件名拷贝到 buf 中之后，为了确保文件名的结尾，需要在文件名后面添加一个空字符（'\0'），以表示字符串的结束。这样做可以保证在打印文件名时，不会输出不属于文件名的内容。
       if(stat(buf, &st) < 0){
         printf("ls: cannot stat %s\n", buf);
         continue;

@@ -40,3 +40,9 @@ void free(void*);
 int atoi(const char*);
 int memcmp(const void *, const void *, uint);
 void *memcpy(void *, const void *, uint);
+
+
+// myfunc
+void serie(int p[]);
+void printASCII(const char *str);
+void trim(char *str);

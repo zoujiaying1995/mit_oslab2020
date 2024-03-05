@@ -73,9 +73,9 @@ uservec:
         # load the address of usertrap(), p->trapframe->kernel_trap
         ld t0, 16(a0)
 
-        # restore kernel page table from p->trapframe->kernel_satp
+        # restore kernel page table from p->trapframe->kernel_satp  # 获取内核页表地址
         ld t1, 0(a0)
-        csrw satp, t1
+        csrw satp, t1 # 将内核页表及地址存入satp中。
         sfence.vma zero, zero
 
         # a0 is no longer valid, since the kernel page

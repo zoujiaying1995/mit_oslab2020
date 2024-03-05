@@ -29,10 +29,20 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+
+/**
+ * stvec：内核在这里写入其陷阱处理程序的地址；RISC-V跳转到这里处理陷阱。
+ * sepc：当发生陷阱时，RISC-V会在这里保存程序计数器pc（因为pc会被stvec覆盖）。sret（从陷阱返回）指令会将sepc复制到pc。内核可以写入sepc来控制sret的去向。
+ * scause： RISC-V在这里放置一个描述陷阱原因的数字。
+ * sscratch：内核在这里放置了一个值，这个值在陷阱处理程序一开始就会派上用场。
+ * sstatus：其中的SIE位控制设备中断是否启用。如果内核清空SIE，RISC-V将推迟设备中断，直到内核重新设置SIE。SPP位指示陷阱是来自用户模式还是管理模式，并控制sret返回的模式。
+ * 
+*/
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
-//
+// 前面uservec做的是：1. 保存用户态的所有寄存器。2. 切换内核态的一部分配置：页表（内核页表的基地址写到相应寄存器。），内核栈指针。但此时特权还在用户态。
 void
 usertrap(void)
 {

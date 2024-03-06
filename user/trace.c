@@ -14,6 +14,12 @@ main(int argc, char *argv[])
     exit(1);
   }
 
+  /**
+   * 1. 当执行该trace.c的时候，实际上是由sh fork一个新的进程来执行程序的。
+   * 2. 因此可以在当前进程（执行trace.c）的进程里，为proc* p 添加一个/数个字段，记录要跟踪的系统调用掩码。
+   * 3. 
+   * 
+  */
   if (trace(atoi(argv[1])) < 0) {
     fprintf(2, "%s: trace failed\n", argv[0]);
     exit(1);

@@ -6,6 +6,7 @@
 #include "proc.h"
 #include "defs.h"
 
+
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
@@ -276,6 +277,9 @@ fork(void)
   np->sz = p->sz;
 
   np->parent = p;
+
+  // trace mask
+  np->tracemask = p->tracemask;
 
   // copy saved user registers.
   *(np->trapframe) = *(p->trapframe);
@@ -692,4 +696,16 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+int
+get_unused_pcount(void)
+{
+  struct proc *p;
+  int unuse=0;
+  for(p = proc; p < &proc[NPROC]; p++){
+    if(p->state != UNUSED)
+      unuse++;
+  }
+  return unuse;
 }

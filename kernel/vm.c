@@ -11,7 +11,26 @@
  */
 pagetable_t kernel_pagetable;
 
+// /*
+//  * the kernel's page table for proc.
+//  */
+// pagetable_t proc_kpagetable;
+
 extern char etext[];  // kernel.ld sets this to end of kernel code.
+
+/**
+  . = 0x80000000;
+
+  .text : {
+    *(.text .text.*)
+    . = ALIGN(0x1000);
+    _trampoline = .;
+    *(trampsec)
+    . = ALIGN(0x1000);
+    ASSERT(. - _trampoline == 0x1000, "error: trampoline larger than one page");
+    PROVIDE(etext = .);
+  }
+*/
 
 extern char trampoline[]; // trampoline.S
 
@@ -21,14 +40,14 @@ extern char trampoline[]; // trampoline.S
 void
 kvminit()
 {
-  kernel_pagetable = (pagetable_t) kalloc();
+  kernel_pagetable = (pagetable_t) kalloc(); // 存储到页表基地址寄存器的地址是物理地址。
   memset(kernel_pagetable, 0, PGSIZE);
 
   // uart registers
   kvmmap(UART0, UART0, PGSIZE, PTE_R | PTE_W);
 
   // virtio mmio disk interface
-  kvmmap(VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+  kvmmap(VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W); // 这只是控制器？
 
   // CLINT
   kvmmap(CLINT, CLINT, 0x10000, PTE_R | PTE_W);
@@ -44,7 +63,42 @@ kvminit()
 
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
+  // 此处将VA的最后一页，映射到物理页面的trampoline处，trampoline由kernel.ld定义。
   kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+}
+
+/*
+ * create a direct-map page table for the kernel.
+ */
+void
+my_kvminit(pagetable_t kpagetable)
+{
+  // kpagetable = (pagetable_t) kalloc(); // 存储到页表基地址寄存器的地址是物理地址。
+  // memset(kpagetable, 0, PGSIZE);
+
+  // uart registers
+  
+  my_kvmmap(kpagetable, UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+  // virtio mmio disk interface
+  my_kvmmap(kpagetable, VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+  // CLINT
+  my_kvmmap(kpagetable, CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+
+  // PLIC
+  my_kvmmap(kpagetable, PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+
+  // map kernel text executable and read-only.
+  my_kvmmap(kpagetable, KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+
+  // map kernel data and the physical RAM we'll make use of.
+  my_kvmmap(kpagetable, (uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  // 此处将VA的最后一页，映射到物理页面的trampoline处，trampoline由kernel.ld定义。
+  my_kvmmap(kpagetable, TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
 }
 
 // Switch h/w page table register to the kernel's page table,
@@ -52,7 +106,19 @@ kvminit()
 void
 kvminithart()
 {
+  // printf(">>>>>>>>>>  kvminithart 1\n");
   w_satp(MAKE_SATP(kernel_pagetable));
+  // printf(">>>>>>>>>>  kvminithart 2\n");
+  sfence_vma();
+  // printf(">>>>>>>>>>  kvminithart 3\n");
+}
+
+// Switch h/w page table register to the kernel's page table,
+// and enable paging.
+void
+my_kvminithart(pagetable_t kpagetable)
+{
+  w_satp(MAKE_SATP(kpagetable));
   sfence_vma();
 }
 
@@ -82,6 +148,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
         return 0;
       memset(pagetable, 0, PGSIZE);
+      // // shift a physical address to the right place for a PTE.
       *pte = PA2PTE(pagetable) | PTE_V;
     }
   }
@@ -121,6 +188,18 @@ kvmmap(uint64 va, uint64 pa, uint64 sz, int perm)
     panic("kvmmap");
 }
 
+// add a mapping to the kernel page table.
+// only used when booting.
+// does not flush TLB or enable paging.
+void
+my_kvmmap(pagetable_t kpagetable, uint64 va, uint64 pa, uint64 sz, int perm)
+{
+  if(mappages(kpagetable, va, sz, pa, perm) != 0)
+    panic("kvmmap");
+}
+
+
+
 // translate a kernel virtual address to
 // a physical address. only needed for
 // addresses on the stack.
@@ -137,6 +216,27 @@ kvmpa(uint64 va)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)
     panic("kvmpa");
+  pa = PTE2PA(*pte);
+  return pa+off;
+}
+
+
+// translate a kernel virtual address to
+// a physical address. only needed for
+// addresses on the stack.
+// assumes va is page aligned.
+uint64
+my_kvmpa(uint64 va, pagetable_t kpagetable)
+{
+  uint64 off = va % PGSIZE;
+  pte_t *pte;
+  uint64 pa;
+  
+  pte = walk(kpagetable, va, 0);
+  if(pte == 0)
+    panic("my_kvmpa");
+  if((*pte & PTE_V) == 0)
+    panic("my_kvmpa");
   pa = PTE2PA(*pte);
   return pa+off;
 }
@@ -180,12 +280,53 @@ uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
     panic("uvmunmap: not aligned");
 
   for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
-    if((pte = walk(pagetable, a, 0)) == 0)
+    if((pte = walk(pagetable, a, 0)) == 0){
+      printf("a:%p\n",a);
       panic("uvmunmap: walk");
-    if((*pte & PTE_V) == 0)
+    }
+      
+    if((*pte & PTE_V) == 0){
+      printf("a:%p\n",a);
       panic("uvmunmap: not mapped");
+    }
+      
     if(PTE_FLAGS(*pte) == PTE_V)
       panic("uvmunmap: not a leaf");
+    if(do_free){
+      uint64 pa = PTE2PA(*pte);
+      kfree((void*)pa);
+    }
+    *pte = 0;
+  }
+}
+
+// Remove npages of mappings starting from va. va must be
+// page-aligned. The mappings must exist.
+// Optionally free the physical memory.
+void
+kvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
+{
+  uint64 a;
+  pte_t *pte;
+
+  if((va % PGSIZE) != 0)
+    panic("kvmunmap: not aligned");
+
+  for(a = va; a < va + npages*PGSIZE; a += PGSIZE){
+    if((pte = walk(pagetable, a, 0)) == 0){
+      printf("a:%p\n",a);
+      panic("kvmunmap: walk");
+      // continue;
+    }
+      
+    if((*pte & PTE_V) == 0){
+      printf("a:%p\n",a);
+      panic("kvmunmap: not mapped");
+      // continue;
+    }
+      
+    if(PTE_FLAGS(*pte) == PTE_V)
+      panic("kvmunmap: not a leaf");
     if(do_free){
       uint64 pa = PTE2PA(*pte);
       kfree((void*)pa);
@@ -200,7 +341,7 @@ pagetable_t
 uvmcreate()
 {
   pagetable_t pagetable;
-  pagetable = (pagetable_t) kalloc();
+  pagetable = (pagetable_t) kalloc(); //分配一个物理页面给新页表。
   if(pagetable == 0)
     return 0;
   memset(pagetable, 0, PGSIZE);
@@ -219,7 +360,7 @@ uvminit(pagetable_t pagetable, uchar *src, uint sz)
     panic("inituvm: more than a page");
   mem = kalloc();
   memset(mem, 0, PGSIZE);
-  mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U);
+  mappages(pagetable, 0, PGSIZE, (uint64)mem, PTE_W|PTE_R|PTE_X|PTE_U); //进程的地址空间中，最下方是.text段，可读可执行，cpu从这里开始读取指令并执行。
   memmove(mem, src, sz);
 }
 

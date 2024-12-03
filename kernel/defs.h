@@ -91,12 +91,15 @@ void            exit(int);
 int             fork(void);
 int             growproc(int);
 pagetable_t     proc_pagetable(struct proc *);
+void            proc_kpagetable(struct proc *);
 void            proc_freepagetable(pagetable_t, uint64);
+void            proc_kfreepagetable(pagetable_t kpagetable);
 int             kill(int);
 struct cpu*     mycpu(void);
 struct cpu*     getmycpu(void);
 struct proc*    myproc();
 void            procinit(void);
+void            my_procinit(void);
 void            scheduler(void) __attribute__((noreturn));
 void            sched(void);
 void            setproc(struct proc*);
@@ -158,10 +161,16 @@ void            uartputc_sync(int);
 int             uartgetc(void);
 
 // vm.c
+
+void            my_kvminit(pagetable_t);
 void            kvminit(void);
 void            kvminithart(void);
+void            my_kvminithart(pagetable_t);
+
 uint64          kvmpa(uint64);
+uint64          my_kvmpa(uint64, pagetable_t);
 void            kvmmap(uint64, uint64, uint64, int);
+void            my_kvmmap(pagetable_t kpagetable, uint64 va, uint64 pa, uint64 sz, int perm);
 int             mappages(pagetable_t, uint64, uint64, uint64, int);
 pagetable_t     uvmcreate(void);
 void            uvminit(pagetable_t, uchar *, uint);
@@ -173,11 +182,13 @@ int             uvmcopy(pagetable_t, pagetable_t, uint64);
 #endif
 void            uvmfree(pagetable_t, uint64);
 void            uvmunmap(pagetable_t, uint64, uint64, int);
+void            kvmunmap(pagetable_t, uint64, uint64, int);
 void            uvmclear(pagetable_t, uint64);
 uint64          walkaddr(pagetable_t, uint64);
 int             copyout(pagetable_t, uint64, char *, uint64);
 int             copyin(pagetable_t, char *, uint64, uint64);
 int             copyinstr(pagetable_t, char *, uint64, uint64);
+void            freewalk(pagetable_t);
 
 // plic.c
 void            plicinit(void);

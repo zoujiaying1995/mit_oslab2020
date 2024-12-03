@@ -8,7 +8,7 @@ void main();
 void timerinit();
 
 // entry.S needs one stack per CPU.
-__attribute__ ((aligned (16))) char stack0[4096 * NCPU];
+__attribute__ ((aligned (16))) char stack0[4096 * NCPU]; // 预留一段4096*NCPU的空间，每个CPU占4096bytes。
 
 // scratch area for timer interrupt, one per CPU.
 uint64 mscratch0[NCPU * 32];

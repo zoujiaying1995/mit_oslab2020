@@ -93,12 +93,16 @@ struct buf*
 bread(uint dev, uint blockno)
 {
   struct buf *b;
-
+  // printf(">>>>>>>>>>  bread 1\n");
   b = bget(dev, blockno);
+  // printf(">>>>>>>>>>  bread 2\n");
   if(!b->valid) {
+    // printf(">>>>>>>>>>  bread 3\n");
     virtio_disk_rw(b, 0);
+    // printf(">>>>>>>>>>  bread 4\n");
     b->valid = 1;
   }
+  // printf(">>>>>>>>>>  bread 5\n");
   return b;
 }
 

@@ -16,6 +16,7 @@
 #include "fs.h"
 #include "buf.h"
 #include "virtio.h"
+#include "proc.h"
 
 // the address of virtio mmio register r.
 #define R(r) ((volatile uint32 *)(VIRTIO0 + (r)))
@@ -200,14 +201,18 @@ virtio_disk_rw(struct buf *b, int write)
     buf0.type = VIRTIO_BLK_T_IN; // read the disk
   buf0.reserved = 0;
   buf0.sector = sector;
-
+  // printf(">>>>>>>>>>  virtio_disk_rw 1\n");
   // buf0 is on a kernel stack, which is not direct mapped,
   // thus the call to kvmpa().
-  disk.desc[idx[0]].addr = (uint64) kvmpa((uint64) &buf0);
+  // disk.desc[idx[0]].addr = (uint64) kvmpa((uint64) &buf0);
+  // struct proc *p = myproc();
+  // printf(">>>>>>>>>>  virtio_disk_rw 2\n");
+  disk.desc[idx[0]].addr = (uint64) my_kvmpa((uint64) &buf0, myproc()->kpagetable);
+  // printf(">>>>>>>>>>  virtio_disk_rw 3\n");
   disk.desc[idx[0]].len = sizeof(buf0);
   disk.desc[idx[0]].flags = VRING_DESC_F_NEXT;
   disk.desc[idx[0]].next = idx[1];
-
+  // printf(">>>>>>>>>>  virtio_disk_rw 4\n");
   disk.desc[idx[1]].addr = (uint64) b->data;
   disk.desc[idx[1]].len = BSIZE;
   if(write)
@@ -216,17 +221,17 @@ virtio_disk_rw(struct buf *b, int write)
     disk.desc[idx[1]].flags = VRING_DESC_F_WRITE; // device writes b->data
   disk.desc[idx[1]].flags |= VRING_DESC_F_NEXT;
   disk.desc[idx[1]].next = idx[2];
-
+  // printf(">>>>>>>>>>  virtio_disk_rw 5\n");
   disk.info[idx[0]].status = 0;
   disk.desc[idx[2]].addr = (uint64) &disk.info[idx[0]].status;
   disk.desc[idx[2]].len = 1;
   disk.desc[idx[2]].flags = VRING_DESC_F_WRITE; // device writes the status
   disk.desc[idx[2]].next = 0;
-
+  // printf(">>>>>>>>>>  virtio_disk_rw 6\n");
   // record struct buf for virtio_disk_intr().
   b->disk = 1;
   disk.info[idx[0]].b = b;
-
+  // printf(">>>>>>>>>>  virtio_disk_rw 7\n");
   // avail[0] is flags
   // avail[1] tells the device how far to look in avail[2...].
   // avail[2...] are desc[] indices the device should process.
@@ -234,16 +239,18 @@ virtio_disk_rw(struct buf *b, int write)
   disk.avail[2 + (disk.avail[1] % NUM)] = idx[0];
   __sync_synchronize();
   disk.avail[1] = disk.avail[1] + 1;
-
+  // printf(">>>>>>>>>>  virtio_disk_rw 8\n");
   *R(VIRTIO_MMIO_QUEUE_NOTIFY) = 0; // value is queue number
-
+  // printf(">>>>>>>>>>  virtio_disk_rw 9\n");
   // Wait for virtio_disk_intr() to say request has finished.
   while(b->disk == 1) {
+    // printf(">>>>>>>>>>  virtio_disk_rw 10\n");
     sleep(b, &disk.vdisk_lock);
   }
-
+  // printf(">>>>>>>>>>  virtio_disk_rw 11\n");
   disk.info[idx[0]].b = 0;
   free_chain(idx[0]);
+  // printf(">>>>>>>>>>  virtio_disk_rw 12\n");
 
   release(&disk.vdisk_lock);
 }

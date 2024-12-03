@@ -99,6 +99,7 @@ usertrap(void)
 void
 usertrapret(void)
 {
+  // printf(">>>>>>>>>> enter usertrapret\n");
   struct proc *p = myproc();
 
   // we're about to switch the destination of traps from
@@ -112,6 +113,15 @@ usertrapret(void)
   // set up trapframe values that uservec will need when
   // the process next re-enters the kernel.
   p->trapframe->kernel_satp = r_satp();         // kernel page table
+  // *********** zjy add *****************
+  /**
+      在内核态用户态切换的时候，会通过上述p->trapframe->kernel_satp 字段进行页表切换
+      这里更改为每个进程维护自己的内核态页表
+      这样的话，在同一个进程内核态用户态之间切换的时候，使用的页表都是自己维护的。
+      只有在线程挂起，让渡cpu给调度器的时候，才要将页表切换为全局页表。
+   */
+  // *********** zjy add end *****************
+
   p->trapframe->kernel_sp = p->kstack + PGSIZE; // process's kernel stack
   p->trapframe->kernel_trap = (uint64)usertrap;
   p->trapframe->kernel_hartid = r_tp();         // hartid for cpuid()

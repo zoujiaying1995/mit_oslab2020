@@ -13,6 +13,8 @@ static int loadseg(pde_t *pgdir, uint64 addr, struct inode *ip, uint offset, uin
 int
 exec(char *path, char **argv)
 {
+  // printf(">>>>>>>>>>>> exec START\n");
+  printf("%s\n", path);
   char *s, *last;
   int i, off;
   uint64 argc, sz = 0, sp, ustack[MAXARG+1], stackbase;
@@ -29,7 +31,7 @@ exec(char *path, char **argv)
     return -1;
   }
   ilock(ip);
-
+  // printf(">>>>>>>>>>>> exec 1\n");
   // Check ELF header
   if(readi(ip, 0, (uint64)&elf, 0, sizeof(elf)) != sizeof(elf))
     goto bad;
@@ -38,7 +40,7 @@ exec(char *path, char **argv)
 
   if((pagetable = proc_pagetable(p)) == 0)
     goto bad;
-
+  // printf(">>>>>>>>>>>> exec 2\n");
   // Load program into memory.
   for(i=0, off=elf.phoff; i<elf.phnum; i++, off+=sizeof(ph)){
     if(readi(ip, 0, (uint64)&ph, off, sizeof(ph)) != sizeof(ph))
@@ -61,10 +63,10 @@ exec(char *path, char **argv)
   iunlockput(ip);
   end_op();
   ip = 0;
-
+  // printf(">>>>>>>>>>>> exec 3\n");
   p = myproc();
   uint64 oldsz = p->sz;
-
+  // printf(">>>>>>>>>>>> exec 4\n");
   // Allocate two pages at the next page boundary.
   // Use the second as the user stack.
   sz = PGROUNDUP(sz);
@@ -75,7 +77,7 @@ exec(char *path, char **argv)
   uvmclear(pagetable, sz-2*PGSIZE);
   sp = sz;
   stackbase = sp - PGSIZE;
-
+  // printf(">>>>>>>>>>>> exec 5\n");
   // Push argument strings, prepare rest of stack in ustack.
   for(argc = 0; argv[argc]; argc++) {
     if(argc >= MAXARG)
@@ -89,7 +91,7 @@ exec(char *path, char **argv)
     ustack[argc] = sp;
   }
   ustack[argc] = 0;
-
+  // printf(">>>>>>>>>>>> exec 6\n");
   // push the array of argv[] pointers.
   sp -= (argc+1) * sizeof(uint64);
   sp -= sp % 16;
@@ -102,13 +104,13 @@ exec(char *path, char **argv)
   // argc is returned via the system call return
   // value, which goes in a0.
   p->trapframe->a1 = sp;
-
+  // printf(">>>>>>>>>>>> exec 7\n");
   // Save program name for debugging.
   for(last=s=path; *s; s++)
     if(*s == '/')
       last = s+1;
   safestrcpy(p->name, last, sizeof(p->name));
-    
+  // printf(">>>>>>>>>>>> exec 8\n");  
   // Commit to the user image.
   oldpagetable = p->pagetable;
   p->pagetable = pagetable;
@@ -116,8 +118,11 @@ exec(char *path, char **argv)
   p->trapframe->epc = elf.entry;  // initial program counter = main
   p->trapframe->sp = sp; // initial stack pointer
   proc_freepagetable(oldpagetable, oldsz);
-
-  vmprint(pagetable,2);
+  // printf(">>>>>>>>>>>> exec 9\n");
+  // printf("now, print the user pagetable:\n");
+  // vmprint(pagetable,2);
+  // printf("now, print the kernel pagetable:\n");
+  // vmprint(p->kpagetable,2);
 
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 

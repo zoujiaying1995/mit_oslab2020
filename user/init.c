@@ -31,6 +31,7 @@ main(void)
       printf("init: fork failed\n");
       exit(1);
     }
+    // printf("fork end\n");
     if(pid == 0){
       exec("sh", argv);
       printf("init: exec sh failed\n");

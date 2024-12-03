@@ -31,19 +31,26 @@ static void
 readsb(int dev, struct superblock *sb)
 {
   struct buf *bp;
-
+  // printf(">>>>>>>>>>  readsb 1\n");
   bp = bread(dev, 1);
+  // printf(">>>>>>>>>>  readsb 2\n");
   memmove(sb, bp->data, sizeof(*sb));
+  // printf(">>>>>>>>>>  readsb 3\n");
   brelse(bp);
+  // printf(">>>>>>>>>>  readsb 4\n");
 }
 
 // Init fs
 void
 fsinit(int dev) {
+  // printf(">>>>>>>>>>  fsinit 1\n");
   readsb(dev, &sb);
+  // printf(">>>>>>>>>>  fsinit 2\n");
   if(sb.magic != FSMAGIC)
     panic("invalid file system");
+  // printf(">>>>>>>>>>  fsinit 3\n");
   initlog(dev, &sb);
+  // printf(">>>>>>>>>>  fsinit 4\n");
 }
 
 // Zero a block.

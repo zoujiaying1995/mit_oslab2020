@@ -8,7 +8,7 @@
 
 struct cpu cpus[NCPU];
 
-struct proc proc[NPROC];
+struct proc proc[NPROC];//初始化的进程都是UNUSED状态， 换句话说，这就是进程池。
 
 struct proc *initproc;
 
@@ -21,28 +21,59 @@ static void freeproc(struct proc *p);
 
 extern char trampoline[]; // trampoline.S
 
-// initialize the proc table at boot time.
+// initialize the proc table at boot time. // 做lab3的时候，不要碰lock相关的代码。只碰内核页表相关的。
 void
 procinit(void)
 {
-  struct proc *p;
+  struct proc *p; 
   
   initlock(&pid_lock, "nextpid");
-  for(p = proc; p < &proc[NPROC]; p++) {
+  for(p = proc; p < &proc[NPROC]; p++) { //p为0-63？
       initlock(&p->lock, "proc");
 
       // Allocate a page for the process's kernel stack.
       // Map it high in memory, followed by an invalid
       // guard page.
-      char *pa = kalloc();
+      char *pa = kalloc(); //freelist管理的是物理页面，kalloc从freelist获取页面。
       if(pa == 0)
         panic("kalloc");
-      uint64 va = KSTACK((int) (p - proc));
+      uint64 va = KSTACK((int) (p - proc)); //从这里先确定了进程在内核态栈的虚拟地址。然后再和物理地址map起来。 指针类型运算会自动计算元素偏差。因此p-proc返回的是索引差。
+      // 此处分配了2个pagesize的va, 返回地址小的那一边。因此下方kvmmap映射的是两页之间的小地址页。
+      //KSTACK分配的是trampoline下的两个页面。但后面的vm-pm映射，只映射一个页面。因此，上面那一页无映射，为保护页。
       kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
-      p->kstack = va;
+      p->kstack = va;//此处是内核栈区的下方。待后续真正分配进程时，会有：p->context.sp = p->kstack + PGSIZE; 
   }
   kvminithart();
 }
+
+// initialize the proc table at boot time. // 做lab3的时候，不要碰lock相关的代码。只碰内核页表相关的。
+void
+my_procinit(void)
+{
+  struct proc *p; 
+  
+  initlock(&pid_lock, "nextpid");
+  for(p = proc; p < &proc[NPROC]; p++) { //p为0-63？
+      initlock(&p->lock, "proc");
+
+      // Allocate a page for the process's kernel stack.
+      // Map it high in memory, followed by an invalid
+      // guard page.
+      // char *pa = kalloc(); //freelist管理的是物理页面，kalloc从freelist获取页面。
+      // if(pa == 0)
+      //   panic("kalloc");
+      // p->kpagetable = uvmcreate(); // 原本的proc->kpagetable这里是空指针的。
+      // my_kvminit(p->kpagetable); // 处理直接映射
+      // uint64 va = KSTACK((int) (0)); //从这里先确定了进程在内核态栈的虚拟地址。然后再和物理地址map起来。 指针类型运算会自动计算元素偏差。因此p-proc返回的是索引差。
+      // // 此处分配了2个pagesize的va, 返回地址小的那一边。因此下方kvmmap映射的是两页之间的小地址页。
+      // //KSTACK分配的是trampoline下的两个页面。但后面的vm-pm映射，只映射一个页面。因此，上面那一页无映射，为保护页。
+      // my_kvmmap(p->kpagetable, va, (uint64)pa, PGSIZE, PTE_R | PTE_W); 
+      // p->kstack = va;//此处是内核栈区的下方。待后续真正分配进程时，会有：p->context.sp = p->kstack + PGSIZE; 
+  }
+  // 是不是得确认schedule使用的是哪个栈，机器栈？如果是机器栈是不是不用管。
+  kvminithart();
+}
+
 
 // Must be called with interrupts disabled,
 // to prevent race with process being moved
@@ -112,10 +143,17 @@ found:
     release(&p->lock);
     return 0;
   }
-
-  // An empty user page table.
+  // printf(" Allocate a trapframe page. end\n");
+  // An empty user page table. //之后看情况 比如fork调用后会复制父进程的用户空间页表到子进程页表。
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  
+  proc_kpagetable(p); // 分配新页表，然后添加 固定映射 + 内核栈映射
+  if(p->kpagetable == 0){
     freeproc(p);
     release(&p->lock);
     return 0;
@@ -125,7 +163,7 @@ found:
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
   p->context.ra = (uint64)forkret;
-  p->context.sp = p->kstack + PGSIZE;
+  p->context.sp = p->kstack + PGSIZE; //此时还是内核态，使用的是内核栈区。
 
   return p;
 }
@@ -141,6 +179,10 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if(p->kpagetable){
+    proc_kfreepagetable(p->kpagetable);
+  }
+  p->kpagetable = 0;
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -160,7 +202,7 @@ proc_pagetable(struct proc *p)
   pagetable_t pagetable;
 
   // An empty page table.
-  pagetable = uvmcreate();
+  pagetable = uvmcreate(); //其实就是分配一个物理页面给新页表。
   if(pagetable == 0)
     return 0;
 
@@ -185,6 +227,32 @@ proc_pagetable(struct proc *p)
   return pagetable;
 }
 
+
+// Create a kernel page table for a given process,
+// with fixed map & kernel-stack map
+void
+proc_kpagetable(struct proc *p)
+{
+  pagetable_t pagetable;
+  // An empty page table.
+  pagetable = uvmcreate(); //其实就是分配一个物理页面给新页表。
+  if(pagetable == 0)
+    panic("uvmcreate kpagetable");
+  
+  char *pa = kalloc(); //freelist管理的是物理页面，kalloc从freelist获取页面。
+  if(pa == 0)
+    panic("kalloc kpagetable");
+  p->kpagetable = uvmcreate(); // 原本的proc->kpagetable这里是空指针的。
+  my_kvminit(p->kpagetable); // 处理直接映射
+  uint64 va = KSTACK((int) (0)); //从这里先确定了进程在内核态栈的虚拟地址。然后再和物理地址map起来。 指针类型运算会自动计算元素偏差。因此p-proc返回的是索引差。
+  // 此处分配了2个pagesize的va, 返回地址小的那一边。因此下方kvmmap映射的是两页之间的小地址页。
+  //KSTACK分配的是trampoline下的两个页面。但后面的vm-pm映射，只映射一个页面。因此，上面那一页无映射，为保护页。
+  my_kvmmap(p->kpagetable, va, (uint64)pa, PGSIZE, PTE_R | PTE_W); 
+  p->kstack = va;//此处是内核栈区的下方。待后续真正分配进程时，会有：p->context.sp = p->kstack + PGSIZE; 
+
+  return ;
+}
+
 // Free a process's page table, and free the
 // physical memory it refers to.
 void
@@ -193,6 +261,23 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmfree(pagetable, sz);
+}
+
+// Free a process's page table, and free the
+// physical memory it refers to.
+void
+proc_kfreepagetable(pagetable_t kpagetable)
+{
+  kvmunmap(kpagetable, TRAMPOLINE, 1, 0);
+  // uvmunmap(pagetable, TRAPFRAME, 1, 0); //内核页表没有映射trapframe
+  kvmunmap(kpagetable, TRAMPOLINE-2*PGSIZE, 1, 1); //内核栈需要把物理页面清掉。
+  kvmunmap(kpagetable,UART0,1,0);
+  kvmunmap(kpagetable,VIRTIO0,1,0);
+  kvmunmap(kpagetable,CLINT, 0x10000/PGSIZE,0);
+  kvmunmap(kpagetable,PLIC,0x400000/PGSIZE,0);
+  kvmunmap(kpagetable,KERNBASE,(PHYSTOP-KERNBASE)/PGSIZE,0); // 直接映射部分无需清掉物理页。
+  // uvmfree(pagetable, sz);
+  freewalk(kpagetable);
 }
 
 // a user program that calls exec("/init")
@@ -213,13 +298,13 @@ userinit(void)
 {
   struct proc *p;
 
-  p = allocproc();
+  p = allocproc(); //alloc后，该新进程处于内核态。p->context.sp = p.kstack+pgsize;
   initproc = p;
   
   // allocate one user page and copy init's instructions
   // and data into it.
   uvminit(p->pagetable, initcode, sizeof(initcode));
-  p->sz = PGSIZE;
+  p->sz = PGSIZE;// 这是堆的顶端吗？
 
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
@@ -267,7 +352,7 @@ fork(void)
     return -1;
   }
 
-  // Copy user memory from parent to child.
+  // Copy user memory from parent to child. //复制用户页表
   if(uvmcopy(p->pagetable, np->pagetable, p->sz) < 0){
     freeproc(np);
     release(&np->lock);
@@ -458,7 +543,7 @@ scheduler(void)
 {
   struct proc *p;
   struct cpu *c = mycpu();
-  
+  // printf("foreforrr \n");
   c->proc = 0;
   for(;;){
     // Avoid deadlock by ensuring that devices can interrupt.
@@ -468,13 +553,17 @@ scheduler(void)
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
       if(p->state == RUNNABLE) {
+        // printf(">>>>>>>>>>> runnerble proc\n");
         // Switch to chosen process.  It is the process's job
         // to release its lock and then reacquire it
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        // printf(">>>>>>>>>>> before switch context\n");
+        my_kvminithart(p->kpagetable); // zjy: 在切换到proc时，需要手动将内核页表写上，然后再调换上下文
         swtch(&c->context, &p->context);
-
+        kvminithart();
+        // printf(">>>>>>>>>>> scheduler: after switch context\n");
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
@@ -505,18 +594,25 @@ void
 sched(void)
 {
   int intena;
+  // printf(">>>>>>>>>>  sched 1\n");
   struct proc *p = myproc();
-
+  // printf(">>>>>>>>>>  sched 2\n");
   if(!holding(&p->lock))
     panic("sched p->lock");
+  // printf(">>>>>>>>>>  sched 3\n");
   if(mycpu()->noff != 1)
     panic("sched locks");
+  // printf(">>>>>>>>>>  sched 4\n");
   if(p->state == RUNNING)
     panic("sched running");
+  // printf(">>>>>>>>>>  sched 5\n");
   if(intr_get())
     panic("sched interruptible");
-
+  // printf(">>>>>>>>>>  sched 6\n");
   intena = mycpu()->intena;
+  // printf(">>>>>>>>>>  sched 7\n");
+  // kvminithart(); // zjy: 返回调度器时，仍用回原来的全局页表
+  // printf(">>>>>>>>>>  sched 8\n");
   swtch(&p->context, &mycpu()->context);
   mycpu()->intena = intena;
 }
@@ -537,19 +633,22 @@ yield(void)
 void
 forkret(void)
 {
+  // printf(">>>>>>>>>> enter forkret\n");
   static int first = 1;
 
   // Still holding p->lock from scheduler.
   release(&myproc()->lock);
-
+  // printf(">>>>>>>>>>  forkret 1\n");
   if (first) {
     // File system initialization must be run in the context of a
     // regular process (e.g., because it calls sleep), and thus cannot
     // be run from main().
     first = 0;
+    // printf(">>>>>>>>>>  forkret 2\n");
     fsinit(ROOTDEV);
+    // printf(">>>>>>>>>>  forkret 3\n");
   }
-
+  // printf(">>>>>>>>>>  forkret 4\n");
   usertrapret();
 }
 
@@ -559,7 +658,7 @@ void
 sleep(void *chan, struct spinlock *lk)
 {
   struct proc *p = myproc();
-  
+  // printf(">>>>>>>>>>  sleep 1\n");
   // Must acquire p->lock in order to
   // change p->state and then call sched.
   // Once we hold p->lock, we can be
@@ -567,19 +666,22 @@ sleep(void *chan, struct spinlock *lk)
   // (wakeup locks p->lock),
   // so it's okay to release lk.
   if(lk != &p->lock){  //DOC: sleeplock0
+    // printf(">>>>>>>>>>  sleep 2\n");
     acquire(&p->lock);  //DOC: sleeplock1
+    // printf(">>>>>>>>>>  sleep 3\n");
     release(lk);
+    // printf(">>>>>>>>>>  sleep 4\n");
   }
-
+  // printf(">>>>>>>>>>  sleep 5\n");
   // Go to sleep.
   p->chan = chan;
   p->state = SLEEPING;
-
+  // printf(">>>>>>>>>>  sleep 6\n");
   sched();
-
+  // printf(">>>>>>>>>>  sleep 7\n");
   // Tidy up.
   p->chan = 0;
-
+  // printf(">>>>>>>>>>  sleep 8\n");
   // Reacquire original lock.
   if(lk != &p->lock){
     release(&p->lock);
